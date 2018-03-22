@@ -52,7 +52,7 @@ class Config230(object):
     n_epochs = 2
     lr = 0.005
     n_test_samples = 10
-    results_dir='../experiments/image_to_sonar_unweighted/'
+    results_dir='../experiments/image_to_sonar_gradient_weighted/'
 
 class Img2Snr(ImageToSonar):  
     def initialize_img_buffer(self):

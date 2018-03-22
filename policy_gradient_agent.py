@@ -129,7 +129,7 @@ class PG(object):
       self.sampled_action = action_means + tf.exp(log_std)*tf.random_normal(shape=[self.action_dim])   # TODO 
       distribution = tf.contrib.distributions.MultivariateNormalDiag(action_means,tf.exp(log_std))
       self.logprob = distribution.log_prob(self.action_placeholder)
-      #self.inp_grad_means = tf.gradients(action_means,[self.input_placeholder])
+      self.inp_grad_means = tf.gradients(action_means,[self.observation_placeholder])
             
   
   
@@ -143,7 +143,7 @@ class PG(object):
     #self.loss = -tf.reduce_sum(self.logprob*self.advantage_placeholder)# TODO
     self.loss = -tf.reduce_mean(self.logprob*self.advantage_placeholder)# TODO
   
-    #self.inp_grad_loss = tf.gradients(self.loss,[self.input_placeholder])
+    self.inp_grad_loss = tf.gradients(self.loss,[self.observation_placeholder])
     
 
   
@@ -294,8 +294,8 @@ class PG(object):
     self.file_writer.add_summary(summary, t)
   def act(self, ob, reward, done, vision):
       state = np.concatenate([ob.track,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
-      action  = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : np.reshape(state,[1,self.observation_dim])})[0]
-      return action
+      action,daction  = self.sess.run([self.sampled_action,self.inp_grad_means], feed_dict={self.observation_placeholder : np.reshape(state,[1,self.observation_dim])})[0]
+      return action, daction
   
   
   def sample_path(self, num_episodes = None):

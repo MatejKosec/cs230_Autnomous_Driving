@@ -18,6 +18,7 @@ class Model(object):
     def add_placeholders(self):
         
         self.sonar_placeholder = tf.placeholder(dtype=tf.float32, shape=[None,19]) #value from 0 to 1
+        self.weights_placeholder = tf.placeholder(dtype=tf.float32, shape=[None,19]) #value from 0 to 1
         self.input_frame_placeholder = tf.placeholder(dtype=tf.float32, shape=[None,64,64,3]) #grayscale frames
         
 
@@ -26,7 +27,10 @@ class Model(object):
         feed_dict = {self.input_frame_placeholder: obs_batch #past
                      }
         if type(sonar_batch) != type(None):
-            feed_dict[self.sonar_placeholder]= sonar_batch
+            sonar = sonar_batch[:,:19]
+            weights = sonar_batch[:,19:]
+            feed_dict[self.sonar_placeholder]= sonar
+            feed_dict[self.weights_placeholder]= weights
             #print('Sonar batch shape', sonar_batch.shape)
             #print('Obs batch shape', obs_batch.shape)
         return feed_dict
@@ -71,8 +75,10 @@ class Model(object):
         
 
     def add_loss_op(self, pred):
-        loss = tf.reduce_mean((pred-self.sonar_placeholder)**2)*39.0/19.0
-        #w=(2-tf.cos(tf.linspace(-np.pi,np.pi,19)))
+        weights = self.weights_placeholder/tf.sum(self.weights_placeholder, axis=1)*39.0/19.0
+        #weights=(2-tf.cos(tf.linspace(-np.pi,np.pi,19)))
+        loss = tf.reduce_mean(weights*(pred-self.sonar_placeholder)**2)
+        
         tf.summary.scalar("loss", loss)
         self.summary_op = tf.summary.merge_all()
         return loss

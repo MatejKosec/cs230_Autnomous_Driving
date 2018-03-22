@@ -47,7 +47,7 @@ def PopulateReplayBuffer(replay_size,episode_count=2,max_steps=2000, history_len
             #Sample observations, rewards, and perform actions
             total_reward = 0.
             for j in range(max_steps):
-                action = agent.act(ob, reward, done, vision)
+                action,daction = agent.act(ob, reward, done, vision)
                 
                 ob, reward, done, _ = env.step(action)
                 #print(ob)
@@ -61,9 +61,9 @@ def PopulateReplayBuffer(replay_size,episode_count=2,max_steps=2000, history_len
                 frame = ob.img.reshape(64,64,3)[::-1,:,:]
                 frame = color.rgb2gray(frame)
                 frame = frame.reshape((64,64,1))
-                sonar = ob.track
+                sonar_dsonar = np.stack([ob.track,daction[0:19]])
                 idx = buffer.store_frame(frame)
-                buffer.store_effect(idx, sonar, reward, done)
+                buffer.store_effect(idx, sonar_dsonar, reward, done)
                 if done or buffer.num_in_buffer >= max_steps:
                     break
             #Summar1ise the session
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     replay_file_test = '../data/replay_buffer_test.pkl'
     a = 0
     if a==0:
-        buffer_train = PopulateReplayBuffer(50000,40,30000, 3, replay_file_train)
+        buffer_train = PopulateReplayBuffer(50000,40,100, 3, replay_file_train)
         #buffer_dev   = PopulateReplayBuffer(100,10,100, 3, replay_file_dev)
         #buffer_test  = PopulateReplayBuffer(100,10,100, 3, replay_file_test)
         
