@@ -86,8 +86,7 @@ class Model(object):
 
     def add_training_op(self, loss):
         self.global_step = tf.Variable(0,dtype=tf.int32,trainable=False,name='global_step')
-        return tf.train.AdamOptimizer(self.config.lr).minimize(loss,global_step=self.global_step)
-        
+        return tf.train.AdamOptimizer(self.config.lr).minimize(loss,global_step=self.global_step)        
 
     def train_on_batch(self, sess, observations_batch, sonar_batch):
         """Perform one step of gradient descent on the provided batch of data. """

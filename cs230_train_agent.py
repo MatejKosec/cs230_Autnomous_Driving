@@ -8,6 +8,7 @@ from skimage import color
 import numpy as np
 import functools
 import time
+import os 
 from matplotlib import pyplot as plt
 
 class config():
@@ -18,10 +19,10 @@ class config():
 
     # output config
     restore_from_ckpt = True
-    output_path  = "../experiments/policy_gradient_new_sensors/"
+    output_path  = "../experiments/policy_gradient_new_sensors_pretrained/"
     model_output = output_path + "model.weights/"
     best_model_output = output_path + "best_model.weights/"
-    restore_model_path = output_path + "best_model.weights/"
+    restore_model_path = "../experiments/policy_gradient_new_sensors/" + "best_model.weights/"
     log_path     = output_path + "log.txt"
     plot_output  = output_path + "scores.png"
     record_path  = output_path
@@ -32,7 +33,7 @@ class config():
     num_batches = 50 # number of batches trained on 
     batch_size = 800 # number of steps used to compute each policy update
     max_ep_len = 800 # maximum episode length
-    learning_rate = 1e-2
+    learning_rate = 1e-3
     gamma         = 0.90
     # the discount factor
     use_baseline = True
@@ -50,11 +51,19 @@ class config():
 class Config230(object):    
     batch_size = 128
     n_epochs = 2
-    lr = 0.005
+    lr = 0.008
     n_test_samples = 10
     results_dir='../experiments/image_to_sonar_gradient_weighted/'
 
 class Img2Snr(ImageToSonar):  
+    def build(self, config):
+        self.config = config
+        self.add_placeholders()
+        self.pred = self.add_prediction_op()
+        self.loss = self.add_coupled_loss(self.pred)
+        self.train_op = self.add_coupled_training_op(self.loss)
+        self.saver = tf.train.Saver()
+        
     def initialize_img_buffer(self):
         self.img_buffer = np.zeros([1,64,64,3], dtype=np.float32)
         self.step = 0
@@ -71,13 +80,32 @@ class Img2Snr(ImageToSonar):
         self.step +=1
         feed_dict = {self.input_frame_placeholder: self.img_buffer}
         return feed_dict
-                     
+
+    def train_on_batch(self, sess, observations_batch, sonar_batch):
+        """Perform one step of gradient descent on the provided batch of data. """
+        feed = self.get_feed_dict(observations_batch, sonar_batch)
+        _, loss, summary, global_step = sess.run([self.train_op, self.loss, self.summary_op,self.global_step], feed_dict=feed)
+        self.train_writer.add_summary(summary, global_step=global_step)
+        return loss
         
     def predict(self,session,img):
         feed = self.get_feed_dict(img)
         predictions = session.run([self.pred], feed_dict=feed)[0]
         #print('Predictions: ',predictions)
         return predictions, np.reshape(self.img_buffer,[64,64,3])
+    
+    def add_coupled_loss(self, pred):
+        weights = self.weights_placeholder #these are gardiennts from downstream
+        coupled_loss = tf.reduce_mean(weights*pred)
+        return coupled_loss
+    
+    def add_coupled_training_op(self, coupled_loss):
+        return tf.train.AdamOptimizer(self.config.lr).minimize(coupled_loss)
+    
+    def save(self, sess):
+        if not os.path.exists('../data/weights_coupled/'):
+            os.makedirs('../data/weights_coupled/')
+        self.saver.save(sess, '../data/weights_coupled/predictor.weights')
 
 class PGP(PG):
     def addSonar(self):
@@ -98,156 +126,221 @@ class PGP(PG):
     def image_to_sonar(self, img):
         return self.sonar_model.predict(self.sonar_session,img)
         
-    def sample_one(self):
-        """
-        MODIFIED SAMPLING FOR TORCS!
-        """
-        print
-        print('START PLOTTING MODULE'.center(80,'='))
-        roll_distance = []
-        print    
-        print("TORCS Experiment Start".center(80,'='))
-        env = TorcsEnv(vision=self.config.vision, throttle=self.config.throttle)
-        try:
-            ob = env.reset()
+    def train(self):
+    """
+    Performs training
+    """
+    
+    last_eval = 0 
+    last_record = 0
+    scores_eval = []
+    
+    self.init_averages()
+    scores_eval = [] # list of scores computed at iteration time
+    
+    # Update learning rate
+    if self.max_roll_distance > 400.0:
+        self.learning_rate = pow(self.learning_rate,0.9)
+  
+    for t in range(self.config.num_batches):
+  
+      # collect a minibatch of samples
+      paths, total_rewards, rollout_distances = self.sample_path() 
+      scores_eval = scores_eval + total_rewards
+      observations = np.concatenate([path["observation"] for path in paths])
+      actions = np.concatenate([path["action"] for path in paths])
+      rewards = np.concatenate([path["reward"] for path in paths])
+      # compute Q-val estimates (discounted future returns) for each time step
+      returns = self.get_returns(paths)
+      advantages = self.calculate_advantage(returns, observations)
+      
+      #Check if current model is best:
+      if max(rollout_distances) > self.max_max_roll_distance:
+          print('New best model found! Saving under: ', self.config.best_model_output)
+          self.saver.save(self.sess, self.config.best_model_output)
+          
+      
+      # run training operations
+      if self.config.use_baseline:
+        self.update_baseline(returns, observations)
+      self.sess.run(self.train_op, feed_dict={
+                    self.observation_placeholder : observations, 
+                    self.action_placeholder : actions, 
+                    self.advantage_placeholder : advantages,
+                    self.lr: self.learning_rate})
+  
+      # tf stuff
+      if (t % self.config.summary_freq == 0):
+        self.update_averages(total_rewards, scores_eval, rollout_distances)
+        self.record_summary(t)
+      
+      print("Learning rate:", self.learning_rate)
+      # compute reward statistics for this batch and log
+      avg_reward = np.mean(total_rewards)
+      sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
+      msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
+      self.logger.info(msg)
+      self.saver.save(self.sess, self.config.model_output)
+      
+
+      
+    self.logger.info("- Training done.")
+    export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
+    
+      def sample_path(self, num_episodes = None):
+    """
+    MODIFIED FOR TORCS!
+    Sample path for the environment.
+  
+    Args:
+            num_episodes:   the number of episodes to be sampled 
+              if none, sample one batch (size indicated by config file)
+    Returns:
+        paths: a list of paths. Each path in paths is a dictionary with
+            path["observation"] a numpy array of ordered observations in the path
+            path["actions"] a numpy array of the corresponding actions in the path
+            path["reward"] a numpy array of the corresponding rewards in the path
+        total_rewards: the sum of all rewards encountered during this "path"
+
+    """
+    episode = 0
+    episode_rewards = []
+    episode_roll_distances = []
+    paths = []
+    t = 0
+    i = 0
+    print    
+    print("TORCS Experiment Start".center(80,'='))
+    env = TorcsEnv(vision=self.config.vision, throttle=self.config.throttle)
+    #print('Num episodes', num_episodes)
+    print('Using a batch size of: ',self.config.batch_size)
+    try:
+        while (num_episodes or t < self.config.batch_size):
+          i+=1
+          print('t', t,'i',i)
+          #Avoid a memory leak in TORCS by relaunching
+          if np.mod(i,10)==0:
+              ob = env.reset()
+          else:
+              ob = env.reset(relaunch=True)
+          sonar,grayscale = self.image_to_sonar(ob.img)
+          sonar = np.reshape(sonar,[19])
+          state = np.concatenate([sonar,np.array([state.speedX,state.speedY, state.speedZ])],axis=0)
+          obs, states, actions, rewards,sonars,grayscales = [], [], [], [],[],[]
+          episode_reward = 0
+          
+          for step in range(self.config.max_ep_len):
+            states.append(state)
+            obs.append(ob)
+            sonars.append(sonar)
+            grayscales.append(grayscale)
+            #print('State', state)
+            action = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : np.reshape(states[-1],[1,self.observation_dim])})[0]
+            ob, reward, done, info = env.step(action)
+            #print('\n State track', state.track)   
+            #print('\n State focus', state.focus)
             sonar,grayscale = self.image_to_sonar(ob.img)
             sonar = np.reshape(sonar,[19])
-            state = np.concatenate([sonar,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
-            obs, states, actions, rewards,sonars,grayscales = [], [], [], [],[],[]
+            state = np.concatenate([sonar,np.array([state.speedX,state.speedY, state.speedZ])],axis=0)
             
-            done = False #has the episode ended? 
-            start_time = time.time()
-            while not done and (time.time()-start_time<300):
-                states.append(state)
-                obs.append(ob)
-                sonars.append(sonar)
-                grayscales.append(grayscale)
-                state = np.concatenate([sonar,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
-                
-                
-                action = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : np.reshape(state,[1,self.observation_dim])})[0]
-                ob, reward, done, info = env.step(action)
-                sonar,grayscale = self.image_to_sonar(ob.img)
-                sonar = np.reshape(sonar,[19])
-                
-                
-                #print('Action: ', action)
-                actions.append(action)
-                rewards.append(reward)
-                roll_distance.append(env.distance_travelled)
-                #print('Roll distance: ', roll_distance)
-        except: 
-            raise
 
-        finally:
-            env.end()  # This is for shutting down TORCS
-            print("Finished TORCS session".center(80,'='))
-            print('Final distance: ', roll_distance[-1],' [m]')
-            print('END PLOTTING MODULE'.center(80,'='))
-            #Plot some of the frames:
-            self.grayscales = grayscales
-            self.sonars=sonars
-            self.obs = obs
-            self.actions = actions
-            self.roll_distance = roll_distance
-            return
-                  
-    
-    def interactive_plot(self):
-        def plot_sonar(sensor_inputs,ax):
-            sensor_inputs *= 200 #outputs divide distance by 200
-            ax.set_theta_zero_location('N')
-            rlim = 30
-            #Plot the sensor inputs
-            sensor_inputs = np.minimum(sensor_inputs,rlim)
-            ax.set_rlim(0,rlim)
-            ax.set_yticks(range(0, rlim, 10))
-            sensor_angles=np.linspace(-np.pi/2.0,np.pi/2.0,len(sensor_inputs))*-1
-            bars = ax.bar(sensor_angles, sensor_inputs, width=5.0*np.pi/180.0, bottom=0.0)
-            # Use custom colors and opacity
-            for r, bar in zip(sensor_inputs, bars):
-                bar.set_facecolor(plt.cm.jet_r(r/rlim/2))
-                bar.set_alpha(0.9)
-            
-            #Plot the car
-            theta = [np.deg2rad(i) for i in [-180,-150,-30,0,30,150,180]]
-            r1 = abs(2.0/np.cos(theta))
-            r2 = [0]*len(r1)
-            ax.plot(theta, r1, color='k')
-            ax.fill_between(theta, r1, r2, alpha=0.2,color='k')  
-     
-        print('INTERACTIVE PLOT START'.center(80,'='))
-        while True:
-            input_string = input('Type distance at which you would like to plot: ')
-            if len(input_string) == 0:
-                break
-            tag = float(input_string)
+            #print('State', state)
+            #print('Reward', reward)
+            #print('info', info)
+            actions.append(action)
+            rewards.append(reward)
+            episode_reward += reward
+            t += 1
+            if (done or step == self.config.max_ep_len-1):
+              episode_rewards.append(episode_reward)
+              episode_roll_distances.append(env.distance_travelled)
+              break
+            if (not num_episodes) and t == self.config.batch_size:
+              break
+      
+          path = {"observation"    : np.array(states), 
+                          "reward" : np.array(rewards), 
+                          "action" : np.array(actions)}
+          paths.append(path)
+          episode += 1
+          if num_episodes and episode >= num_episodes:
+            break        
+    finally:
+        env.end()  # This is for shutting down TORCS
+        print("Finished TORCS session".center(80,'='))
+        #Plot some of the frames:
+        self.grayscales = grayscales
+        self.sonars=sonars
+        self.obs = obs
+        self.actions = actions
+        self.roll_distance = roll_distance
+    return paths, episode_rewards, episode_roll_distances
 
-            sorted_tags = sorted(range(len(self.obs)), key= lambda i: abs(self.roll_distance[i]-tag))
-            closest_tag = sorted_tags[0]
-            print('Plotting at distance %i'%(int(self.roll_distance[closest_tag])))
-            img = None
-            if self.config.vision:
-                img = self.obs[closest_tag].img
-            savefile = '../experiments/image_to_sonar/' + 'img2snr_snapshot_at_%i_m.png'%(int(self.roll_distance[closest_tag]))
-            
-            plt.figure(tag,figsize=(12,10))
-            ax = plt.subplot(221)
-            plt.imshow(np.reshape(img,[64,64,3]),origin='lower')
-            plt.setp(ax.get_xticklabels(), visible=False)
-            plt.setp(ax.get_xticklines(), visible=False)
-            plt.setp(ax.get_yticklabels(), visible=False)
-            plt.setp(ax.get_yticklines(), visible=False)
-            plt.xlabel('Camera') #1
-            
-            ax = plt.subplot(222, projection = 'polar')
-            plot_sonar(np.reshape(self.obs[closest_tag].track,[19,]),ax)
-            plt.xlabel('True sonar') #1
-            
-            
-            ax = plt.subplot(223)
-            plt.imshow(self.grayscales[closest_tag][:,:,:])
-            plt.setp(ax.get_xticklabels(), visible=False)
-            plt.setp(ax.get_xticklines(), visible=False)
-            plt.setp(ax.get_yticklabels(), visible=False)
-            plt.setp(ax.get_yticklines(), visible=False)
-            plt.xlabel('Stack of 3 observations (input)') #1
-            
-            ax = plt.subplot(224, projection = 'polar')
-            plot_sonar(np.reshape(self.sonars[closest_tag],[19,]),ax)
-            #Plot the steering direction
-            steering_direction = self.actions[closest_tag]
-            print('Sterring direction: ', steering_direction)
-            theta= [0,np.deg2rad(steering_direction*90)]
-            rlim = 25
-            r  = [0,rlim*0.8]
-            ax.plot(theta,r,c='k',lw='4')
-            plt.xlabel('Predicted sonar with steering dir') #1
-            
-            plt.savefig(savefile,dpi=300, bbox_inches='tight')
-            
-            
-            
-            #plot(self.sonars[closest_tag],self.actions[closest_tag],img=img,savefile=savefile)
-            #plot(self.obs[closest_tag].track,self.actions[closest_tag],img=img,savefile=savefile)
-        return
+      def train(self):
+    """
+    Performs training
+    """
     
-    def sample_twenty(self):    
-        roll_out_distances = []
-        #Sample 10 episodes
-        for i in range(20):
-            self.sample_one()
-            roll_out_distances.append(max(self.roll_distance))
-        print(roll_out_distances)
-        mean = np.mean(roll_out_distances)
-        mini = np.min(roll_out_distances)
-        maxi = np.max(roll_out_distances)
-        std  = np.sqrt(np.var(roll_out_distances) / len(roll_out_distances))
-        print('Min distance:'.ljust(15,'_')+"%i"%mini)
-        print('Mean distance:'.ljust(15,'_')+"%i"%mean)
-        print('Max distance:'.ljust(15,'_')+"%i"%maxi)
-        print('Std distance:'.ljust(15,'_')+"%i"%std)
+    last_eval = 0 
+    last_record = 0
+    scores_eval = []
     
+    
+    
+    self.init_averages()
+    scores_eval = [] # list of scores computed at iteration time
+    
+    # Update learning rate
+    if self.max_roll_distance > 400.0:
+        self.learning_rate = pow(self.learning_rate,0.9)
+  
+    for t in range(self.config.num_batches):
+  
+      # collect a minibatch of samples
+      paths, total_rewards, rollout_distances = self.sample_path() 
+      scores_eval = scores_eval + total_rewards
+      observations = np.concatenate([path["observation"] for path in paths])
+      actions = np.concatenate([path["action"] for path in paths])
+      rewards = np.concatenate([path["reward"] for path in paths])
+      # compute Q-val estimates (discounted future returns) for each time step
+      returns = self.get_returns(paths)
+      advantages = self.calculate_advantage(returns, observations)
+      
+      #Check if current model is best:
+      if max(rollout_distances) > self.max_max_roll_distance:
+          print('New best model found! Saving under: ', self.config.best_model_output)
+          self.saver.save(self.sess, self.config.best_model_output)
+          self.sonar_model.save(self.sonar_session)
+          
+      #########################################################################
+      # Run training on both networks by passing gradients down to the image
+      # to sonar network 
+      #########################################################################
+      # run training operations
+      if self.config.use_baseline:
+        self.update_baseline(returns, observations)
+        self.sess.run(self.train_op, feed_dict={
+                    self.observation_placeholder : observations, 
+                    self.action_placeholder : actions, 
+                    self.advantage_placeholder : advantages,
+                    self.lr: self.learning_rate})
+  
+      # tf stuff
+      if (t % self.config.summary_freq == 0):
+        self.update_averages(total_rewards, scores_eval, rollout_distances)
+        self.record_summary(t)
+      
+      print("Learning rate:", self.learning_rate)
+      # compute reward statistics for this batch and log
+      avg_reward = np.mean(total_rewards)
+      sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
+      msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
+      self.logger.info(msg)
+      self.saver.save(self.sess, self.config.model_output)
+      
+      
+    self.logger.info("- Training done.")
+    export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
     
 if __name__ == '__main__':
     #Create the policy gradient actor
@@ -264,9 +357,9 @@ if __name__ == '__main__':
         sonar_graph = tf.Graph()
         with sonar_graph.as_default():
             model.addSonar();
-        model.sample_one()
-        model.sample_twenty()
-        model.interactive_plot()
+        model.run()
+        #Save the model
+        model.save()
     except:
         raise
 
