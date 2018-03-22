@@ -83,8 +83,8 @@ class Img2Snr(ImageToSonar):
 
     def train_on_batch(self, sess, observations_batch, sonar_batch):
         """Perform one step of gradient descent on the provided batch of data. """
-        feed = self.get_feed_dict(observations_batch, sonar_batch)
-        _, loss, summary, global_step = sess.run([self.train_op, self.loss, self.summary_op,self.global_step], feed_dict=feed)
+        feed = self.create_feed_dict(observations_batch, sonar_batch)
+        _, loss, summary = sess.run([self.train_op, self.loss, self.summary_op], feed_dict=feed)
         self.train_writer.add_summary(summary, global_step=global_step)
         return loss
         
@@ -126,221 +126,181 @@ class PGP(PG):
     def image_to_sonar(self, img):
         return self.sonar_model.predict(self.sonar_session,img)
         
+    
+    def sample_path(self, num_episodes = None):
+        """
+        MODIFIED FOR TORCS!
+        Sample path for the environment.
+      
+        Args:
+                num_episodes:   the number of episodes to be sampled 
+                  if none, sample one batch (size indicated by config file)
+        Returns:
+            paths: a list of paths. Each path in paths is a dictionary with
+                path["observation"] a numpy array of ordered observations in the path
+                path["actions"] a numpy array of the corresponding actions in the path
+                path["reward"] a numpy array of the corresponding rewards in the path
+            total_rewards: the sum of all rewards encountered during this "path"
+    
+        """
+        episode = 0
+        episode_rewards = []
+        episode_roll_distances = []
+        paths = []
+        t = 0
+        i = 0
+        print    
+        print("TORCS Experiment Start".center(80,'='))
+        env = TorcsEnv(vision=self.config.vision, throttle=self.config.throttle)
+        #print('Num episodes', num_episodes)
+        print('Using a batch size of: ',self.config.batch_size)
+        try:
+            while (num_episodes or t < self.config.batch_size):
+              i+=1
+              print('t', t,'i',i)
+              #Avoid a memory leak in TORCS by relaunching
+              if np.mod(i,10)==0:
+                  ob = env.reset()
+              else:
+                  ob = env.reset(relaunch=True)
+              sonar,grayscale = self.image_to_sonar(ob.img)
+              sonar = np.reshape(sonar,[19])
+              state = np.concatenate([sonar,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
+              obs, states, actions, rewards,sonars,grayscales,frames = [], [], [], [],[],[],[]
+              
+              img = ob.img.reshape(64,64,3)[::-1,:,:]
+              img = color.rgb2gray(img)
+              img = img.reshape((64,64,1))
+              frame = np.tile(img,[1,1,3])
+              
+              episode_reward = 0
+              
+              for step in range(self.config.max_ep_len):
+                states.append(state)
+                obs.append(ob)
+                sonars.append(sonar)
+                grayscales.append(grayscale)
+                frames.append(frame)
+                #print('State', state)
+                action = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : np.reshape(states[-1],[1,self.observation_dim])})[0]
+                ob, reward, done, info = env.step(action)
+                #print('\n State track', state.track)   
+                #print('\n State focus', state.focus)
+                sonar,grayscale = self.image_to_sonar(ob.img)
+                sonar = np.reshape(sonar,[19])
+                state = np.concatenate([sonar,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
+                #Get the last 3 frames
+                img = ob.img.reshape(64,64,3)[::-1,:,:]
+                img = color.rgb2gray(img)
+                img = img.reshape((64,64,1))
+                frame[:,:,2] = frame[:,:,1]
+                frame[:,:,1] = frame[:,:,0]
+                frame[:,:,0] = img[:,:,0]
+                
+    
+                #print('State', state)
+                #print('Reward', reward)
+                #print('info', info)
+                actions.append(action)
+                rewards.append(reward)
+                episode_reward += reward
+                t += 1
+                if (done or step == self.config.max_ep_len-1):
+                  episode_rewards.append(episode_reward)
+                  episode_roll_distances.append(env.distance_travelled)
+                  break
+                if (not num_episodes) and t == self.config.batch_size:
+                  break
+          
+              path = {"observation"    : np.array(states), 
+                              "reward" : np.array(rewards), 
+                              "action" : np.array(actions),
+                              "frame"  : np.array(frames)}
+              paths.append(path)
+              episode += 1
+              if num_episodes and episode >= num_episodes:
+                break        
+        finally:
+            env.end()  # This is for shutting down TORCS
+            print("Finished TORCS session".center(80,'='))
+            #Plot some of the frames:
+            self.grayscales = grayscales
+            self.sonars=sonars
+            self.obs = obs
+            self.actions = actions
+            self.roll_distance = roll_distance
+        return paths, episode_rewards, episode_roll_distances
+
     def train(self):
-    """
-    Performs training
-    """
-    
-    last_eval = 0 
-    last_record = 0
-    scores_eval = []
-    
-    self.init_averages()
-    scores_eval = [] # list of scores computed at iteration time
-    
-    # Update learning rate
-    if self.max_roll_distance > 400.0:
-        self.learning_rate = pow(self.learning_rate,0.9)
-  
-    for t in range(self.config.num_batches):
-  
-      # collect a minibatch of samples
-      paths, total_rewards, rollout_distances = self.sample_path() 
-      scores_eval = scores_eval + total_rewards
-      observations = np.concatenate([path["observation"] for path in paths])
-      actions = np.concatenate([path["action"] for path in paths])
-      rewards = np.concatenate([path["reward"] for path in paths])
-      # compute Q-val estimates (discounted future returns) for each time step
-      returns = self.get_returns(paths)
-      advantages = self.calculate_advantage(returns, observations)
+        """
+        Performs training
+        """
+        
+        last_eval = 0 
+        last_record = 0
+        scores_eval = []
+        
+        
+        
+        self.init_averages()
+        scores_eval = [] # list of scores computed at iteration time
+        
+        # Update learning rate
+        if self.max_roll_distance > 400.0:
+            self.learning_rate = pow(self.learning_rate,0.9)
       
-      #Check if current model is best:
-      if max(rollout_distances) > self.max_max_roll_distance:
-          print('New best model found! Saving under: ', self.config.best_model_output)
-          self.saver.save(self.sess, self.config.best_model_output)
+        for t in range(self.config.num_batches):
+      
+          # collect a minibatch of samples
+          paths, total_rewards, rollout_distances = self.sample_path() 
+          scores_eval = scores_eval + total_rewards
+          observations = np.concatenate([path["observation"] for path in paths])
+          actions = np.concatenate([path["action"] for path in paths])
+          rewards = np.concatenate([path["reward"] for path in paths])
+          frames = np.concatenate([path["frame"] for path in paths])
+          # compute Q-val estimates (discounted future returns) for each time step
+          returns = self.get_returns(paths)
+          advantages = self.calculate_advantage(returns, observations)
           
+          #Check if current model is best:
+          if max(rollout_distances) > self.max_max_roll_distance:
+              print('New best model found! Saving under: ', self.config.best_model_output)
+              self.saver.save(self.sess, self.config.best_model_output)
+              self.sonar_model.save(self.sonar_session)
+              
+          #########################################################################
+          # Run training on both networks by passing gradients down to the image
+          # to sonar network 
+          #########################################################################
+          # run training operations
+          if self.config.use_baseline:
+            self.update_baseline(returns, observations)
+            [_,downstream_grads] = self.sess.run([self.train_op,self.inp_grad_loss], feed_dict={
+                        self.observation_placeholder : observations, 
+                        self.action_placeholder : actions, 
+                        self.advantage_placeholder : advantages,
+                        self.lr: self.learning_rate})
+            downstream_grads = downstream_grads[0]
+            #Concatenate sonar an dsonar 
+            sonar_dsonar_batch = np.concatenate([observations,downstream_grads],axis=1)
+            self.sonar_model.train_on_batch(frames, sonar_dsonar_batch)
       
-      # run training operations
-      if self.config.use_baseline:
-        self.update_baseline(returns, observations)
-      self.sess.run(self.train_op, feed_dict={
-                    self.observation_placeholder : observations, 
-                    self.action_placeholder : actions, 
-                    self.advantage_placeholder : advantages,
-                    self.lr: self.learning_rate})
-  
-      # tf stuff
-      if (t % self.config.summary_freq == 0):
-        self.update_averages(total_rewards, scores_eval, rollout_distances)
-        self.record_summary(t)
-      
-      print("Learning rate:", self.learning_rate)
-      # compute reward statistics for this batch and log
-      avg_reward = np.mean(total_rewards)
-      sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
-      msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
-      self.logger.info(msg)
-      self.saver.save(self.sess, self.config.model_output)
-      
-
-      
-    self.logger.info("- Training done.")
-    export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
-    
-      def sample_path(self, num_episodes = None):
-    """
-    MODIFIED FOR TORCS!
-    Sample path for the environment.
-  
-    Args:
-            num_episodes:   the number of episodes to be sampled 
-              if none, sample one batch (size indicated by config file)
-    Returns:
-        paths: a list of paths. Each path in paths is a dictionary with
-            path["observation"] a numpy array of ordered observations in the path
-            path["actions"] a numpy array of the corresponding actions in the path
-            path["reward"] a numpy array of the corresponding rewards in the path
-        total_rewards: the sum of all rewards encountered during this "path"
-
-    """
-    episode = 0
-    episode_rewards = []
-    episode_roll_distances = []
-    paths = []
-    t = 0
-    i = 0
-    print    
-    print("TORCS Experiment Start".center(80,'='))
-    env = TorcsEnv(vision=self.config.vision, throttle=self.config.throttle)
-    #print('Num episodes', num_episodes)
-    print('Using a batch size of: ',self.config.batch_size)
-    try:
-        while (num_episodes or t < self.config.batch_size):
-          i+=1
-          print('t', t,'i',i)
-          #Avoid a memory leak in TORCS by relaunching
-          if np.mod(i,10)==0:
-              ob = env.reset()
-          else:
-              ob = env.reset(relaunch=True)
-          sonar,grayscale = self.image_to_sonar(ob.img)
-          sonar = np.reshape(sonar,[19])
-          state = np.concatenate([sonar,np.array([state.speedX,state.speedY, state.speedZ])],axis=0)
-          obs, states, actions, rewards,sonars,grayscales = [], [], [], [],[],[]
-          episode_reward = 0
+          # tf stuff
+          if (t % self.config.summary_freq == 0):
+            self.update_averages(total_rewards, scores_eval, rollout_distances)
+            self.record_summary(t)
           
-          for step in range(self.config.max_ep_len):
-            states.append(state)
-            obs.append(ob)
-            sonars.append(sonar)
-            grayscales.append(grayscale)
-            #print('State', state)
-            action = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : np.reshape(states[-1],[1,self.observation_dim])})[0]
-            ob, reward, done, info = env.step(action)
-            #print('\n State track', state.track)   
-            #print('\n State focus', state.focus)
-            sonar,grayscale = self.image_to_sonar(ob.img)
-            sonar = np.reshape(sonar,[19])
-            state = np.concatenate([sonar,np.array([state.speedX,state.speedY, state.speedZ])],axis=0)
-            
-
-            #print('State', state)
-            #print('Reward', reward)
-            #print('info', info)
-            actions.append(action)
-            rewards.append(reward)
-            episode_reward += reward
-            t += 1
-            if (done or step == self.config.max_ep_len-1):
-              episode_rewards.append(episode_reward)
-              episode_roll_distances.append(env.distance_travelled)
-              break
-            if (not num_episodes) and t == self.config.batch_size:
-              break
-      
-          path = {"observation"    : np.array(states), 
-                          "reward" : np.array(rewards), 
-                          "action" : np.array(actions)}
-          paths.append(path)
-          episode += 1
-          if num_episodes and episode >= num_episodes:
-            break        
-    finally:
-        env.end()  # This is for shutting down TORCS
-        print("Finished TORCS session".center(80,'='))
-        #Plot some of the frames:
-        self.grayscales = grayscales
-        self.sonars=sonars
-        self.obs = obs
-        self.actions = actions
-        self.roll_distance = roll_distance
-    return paths, episode_rewards, episode_roll_distances
-
-      def train(self):
-    """
-    Performs training
-    """
-    
-    last_eval = 0 
-    last_record = 0
-    scores_eval = []
-    
-    
-    
-    self.init_averages()
-    scores_eval = [] # list of scores computed at iteration time
-    
-    # Update learning rate
-    if self.max_roll_distance > 400.0:
-        self.learning_rate = pow(self.learning_rate,0.9)
-  
-    for t in range(self.config.num_batches):
-  
-      # collect a minibatch of samples
-      paths, total_rewards, rollout_distances = self.sample_path() 
-      scores_eval = scores_eval + total_rewards
-      observations = np.concatenate([path["observation"] for path in paths])
-      actions = np.concatenate([path["action"] for path in paths])
-      rewards = np.concatenate([path["reward"] for path in paths])
-      # compute Q-val estimates (discounted future returns) for each time step
-      returns = self.get_returns(paths)
-      advantages = self.calculate_advantage(returns, observations)
-      
-      #Check if current model is best:
-      if max(rollout_distances) > self.max_max_roll_distance:
-          print('New best model found! Saving under: ', self.config.best_model_output)
-          self.saver.save(self.sess, self.config.best_model_output)
-          self.sonar_model.save(self.sonar_session)
+          print("Learning rate:", self.learning_rate)
+          # compute reward statistics for this batch and log
+          avg_reward = np.mean(total_rewards)
+          sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
+          msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
+          self.logger.info(msg)
+          self.saver.save(self.sess, self.config.model_output)
           
-      #########################################################################
-      # Run training on both networks by passing gradients down to the image
-      # to sonar network 
-      #########################################################################
-      # run training operations
-      if self.config.use_baseline:
-        self.update_baseline(returns, observations)
-        self.sess.run(self.train_op, feed_dict={
-                    self.observation_placeholder : observations, 
-                    self.action_placeholder : actions, 
-                    self.advantage_placeholder : advantages,
-                    self.lr: self.learning_rate})
-  
-      # tf stuff
-      if (t % self.config.summary_freq == 0):
-        self.update_averages(total_rewards, scores_eval, rollout_distances)
-        self.record_summary(t)
-      
-      print("Learning rate:", self.learning_rate)
-      # compute reward statistics for this batch and log
-      avg_reward = np.mean(total_rewards)
-      sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
-      msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
-      self.logger.info(msg)
-      self.saver.save(self.sess, self.config.model_output)
-      
-      
-    self.logger.info("- Training done.")
-    export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
+          
+        self.logger.info("- Training done.")
+        self.export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
     
 if __name__ == '__main__':
     #Create the policy gradient actor
