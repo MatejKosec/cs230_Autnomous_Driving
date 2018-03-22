@@ -89,8 +89,8 @@ if __name__ == "__main__":
     replay_file_test = '../data/replay_buffer_test.pkl'
     a = 0
     if a==0:
-        buffer_train = PopulateReplayBuffer(50000,40,100, 3, replay_file_train)
-        #buffer_dev   = PopulateReplayBuffer(100,10,100, 3, replay_file_dev)
+        buffer_train = PopulateReplayBuffer(50000,40,30000, 3, replay_file_train)
+        #buffer_dev   = PopulateReplayBuffer(150,10,150, 3, replay_file_dev)
         #buffer_test  = PopulateReplayBuffer(100,10,100, 3, replay_file_test)
         
     elif a==1:

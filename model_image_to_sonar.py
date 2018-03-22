@@ -75,7 +75,8 @@ class Model(object):
         
 
     def add_loss_op(self, pred):
-        weights = self.weights_placeholder/tf.reduce_sum(self.weights_placeholder, axis=1)*39.0/19.0
+        weights = tf.abs(self.weights_placeholder)
+        weights = weights/tf.reshape(tf.reduce_sum(weights, axis=1),[-1,1])*39.0/19.0
         #weights=(2-tf.cos(tf.linspace(-np.pi,np.pi,19)))
         loss = tf.reduce_mean(weights*(pred-self.sonar_placeholder)**2)
         
@@ -180,6 +181,7 @@ class Model(object):
         for i in range(n_minibatches):
             obs_batch, sonar_batch, rew_batch, next_obs_batch, done_mask = train_buffer.sample(self.config.batch_size)
             loss = self.train_on_batch(sess, obs_batch, sonar_batch)
+            print('i',i)
             prog.update(i + 1, [("train loss", loss)], force=i + 1 == n_minibatches)
             if i%100 == 0 or i== n_minibatches -1:
                 if i== n_minibatches -1: print("Evaluating on dev set",) 
