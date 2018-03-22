@@ -8,6 +8,7 @@ from skimage import color
 import numpy as np
 import functools
 import time
+import random
 import os 
 from matplotlib import pyplot as plt
 
@@ -31,9 +32,9 @@ class config():
 
     # model and training config
     num_batches = 50 # number of batches trained on 
-    batch_size = 800 # number of steps used to compute each policy update
-    max_ep_len = 800 # maximum episode length
-    learning_rate = 1e-3
+    batch_size = 100 # number of steps used to compute each policy update
+    max_ep_len = 100 # maximum episode length
+    learning_rate = 1e-4
     gamma         = 0.90
     # the discount factor
     use_baseline = True
@@ -49,9 +50,9 @@ class config():
     if max_ep_len < 0: max_ep_len = batch_size
     
 class Config230(object):    
-    batch_size = 128
+    batch_size = 64
     n_epochs = 2
-    lr = 0.008
+    lr = 0.02
     n_test_samples = 10
     results_dir='../experiments/image_to_sonar_gradient_weighted/'
 
@@ -101,11 +102,15 @@ class Img2Snr(ImageToSonar):
     def train_on_batch(self, sess, observations_batch, sonar_batch):
         """Perform one step of gradient descent on the provided batch of data. """
         n_minibatches = sonar_batch.shape[0] // self.config.batch_size + 1
-        for i in range(n_minibatches):
+        batches = list(range(n_minibatches))
+        random.shuffle(batches)
+        for i in batches:
             print('Processing batch %i of %i'%(i,n_minibatches))
             start =  self.config.batch_size*i
             end   =  min(self.config.batch_size*(i+1),sonar_batch.shape[0])
-            feed = self.create_feed_dict(observations_batch[start:end,:,:,:], sonar_batch[start:end,:])
+            indexes = list(range(start,end))
+            random.shuffle(indexes)
+            feed = self.create_feed_dict(observations_batch[indexes,:,:,:], sonar_batch[indexes,:])
             _, loss, summary = sess.run([self.train_op, self.loss, self.summary_op], feed_dict=feed)
             self.train_writer.add_summary(summary)
         return loss

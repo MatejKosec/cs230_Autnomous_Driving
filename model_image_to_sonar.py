@@ -41,10 +41,10 @@ class Model(object):
         
         #Convolution, convolution, pool
         x1 = tf.contrib.layers.conv2d(self.input_frame_placeholder, 32, \
-                                          kernel_size=[4,4], stride=(1,1), padding='SAME', normalizer_fn=tf.contrib.layers.batch_norm)
+                                          kernel_size=[4,4], stride=(1,1), padding='SAME', activation_fn=tf.nn.leaky_relu, normalizer_fn=tf.contrib.layers.batch_norm)
         print('x1 shape', x1.shape)
         x1 = tf.contrib.layers.conv2d(x1, 24, \
-                                          kernel_size=[4,4], stride=(1,1), padding='SAME', normalizer_fn=tf.contrib.layers.batch_norm)
+                                          kernel_size=[4,4], stride=(1,1), padding='SAME', activation_fn=tf.nn.leaky_relu, normalizer_fn=tf.contrib.layers.batch_norm)
         print('x1 shape', x1.shape)
         x2 = tf.contrib.layers.max_pool2d(x1, \
                                           kernel_size=[2,2], stride=(2,2), padding='SAME')
@@ -64,7 +64,7 @@ class Model(object):
         print('x7 shape', x7.shape)
         x8= tf.contrib.layers.conv2d_transpose(x7, 12 ,  [4,4], stride=(1,1), padding='SAME',activation_fn=tf.nn.relu)
         print('x8 shape', x8.shape)
-        x9 = tf.contrib.layers.conv2d(x8, 19, [16,16], stride=(1), padding='valid',activation_fn=tf.nn.relu)
+        x9 = tf.contrib.layers.conv2d(x8, 19, [16,16], stride=(1), padding='valid',activation_fn=tf.nn.leaky_relu)
         pred = tf.contrib.layers.conv2d(x9, 19, [1,1], stride=(1), padding='valid',activation_fn=tf.nn.sigmoid)
         print('pred shape', pred.shape)
         pred = tf.reshape(pred,[-1,19])
