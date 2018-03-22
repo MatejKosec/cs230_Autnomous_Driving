@@ -64,6 +64,12 @@ class Img2Snr(ImageToSonar):
         self.train_op = self.add_coupled_training_op(self.loss)
         self.saver = tf.train.Saver()
         
+    def initialize(self,sess):
+        print("Restoring the best model weights found on the dev set")
+        self.saver.restore(sess, '../data/weights/predictor.weights')
+        return
+        
+        
     def initialize_img_buffer(self):
         self.img_buffer = np.zeros([1,64,64,3], dtype=np.float32)
         self.step = 0
@@ -85,7 +91,7 @@ class Img2Snr(ImageToSonar):
         """Perform one step of gradient descent on the provided batch of data. """
         feed = self.create_feed_dict(observations_batch, sonar_batch)
         _, loss, summary = sess.run([self.train_op, self.loss, self.summary_op], feed_dict=feed)
-        self.train_writer.add_summary(summary, global_step=global_step)
+        self.train_writer.add_summary(summary)
         return loss
         
     def predict(self,session,img):
@@ -95,7 +101,7 @@ class Img2Snr(ImageToSonar):
         return predictions, np.reshape(self.img_buffer,[64,64,3])
     
     def add_coupled_loss(self, pred):
-        weights = self.weights_placeholder #these are gardiennts from downstream
+        weights = self.weights_placeholder #these are gradients from downstream
         coupled_loss = tf.reduce_mean(weights*pred)
         return coupled_loss
     
@@ -109,17 +115,17 @@ class Img2Snr(ImageToSonar):
 
 class PGP(PG):
     def addSonar(self):
-        print("Building the cs230 image to sonar model..."),
+        print('='*80)
+        print("ADDING the cs230 image to sonar model..."),
         start = time.time()
         self.sonar_model = Img2Snr(Config230())
         print('Model has {} parameters'.format(model.count_trainable_params()))
         #Setup variable initialization
-        self.sonar_model.initialize_img_buffer()
-        saver = tf.train.Saver()
         self.sonar_session = tf.Session()
-        print("Restoring the best model weights found on the dev set")
-        saver.restore(self.sonar_session, '../data/weights/predictor.weights')
+        self.sonar_model.initialize(self.sonar_session)
+        self.sonar_model.initialize_img_buffer()
         print("took {:.2f} seconds\n".format(time.time() - start))
+        print('='*80)
         
         
         
@@ -317,7 +323,7 @@ if __name__ == '__main__':
         sonar_graph = tf.Graph()
         with sonar_graph.as_default():
             model.addSonar();
-        model.run()
+        model.train()
         #Save the model
         model.save()
     except:
