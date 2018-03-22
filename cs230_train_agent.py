@@ -68,6 +68,17 @@ class Img2Snr(ImageToSonar):
         print("Restoring the best model weights found on the dev set")
         self.saver.restore(sess, '../data/weights/predictor.weights')
         return
+    
+    def create_feed_dict(self, obs_batch,dsonar_batch=None):
+        """Creates the feed_dict for one step of training. """
+        feed_dict = {self.input_frame_placeholder: obs_batch #past
+                     }
+        if type(dsonar_batch) != type(None):
+            weights = dsonar_batch
+            feed_dict[self.weights_placeholder]= weights
+        print('dSonar batch shape', dsonar_batch.shape)
+        print('Obs batch shape', obs_batch.shape)
+        return feed_dict
         
         
     def initialize_img_buffer(self):
@@ -103,6 +114,8 @@ class Img2Snr(ImageToSonar):
     def add_coupled_loss(self, pred):
         weights = self.weights_placeholder #these are gradients from downstream
         coupled_loss = tf.reduce_mean(weights*pred)
+        tf.summary.scalar("coupled_loss", coupled_loss)
+        self.summary_op = tf.summary.merge_all()
         return coupled_loss
     
     def add_coupled_training_op(self, coupled_loss):
@@ -118,10 +131,14 @@ class PGP(PG):
         print('='*80)
         print("ADDING the cs230 image to sonar model..."),
         start = time.time()
-        self.sonar_model = Img2Snr(Config230())
+        self.sonar_config = Config230()
+        self.sonar_model = Img2Snr(self.sonar_config)
         print('Model has {} parameters'.format(model.count_trainable_params()))
         #Setup variable initialization
         self.sonar_session = tf.Session()
+        train_writer = tf.summary.FileWriter(os.path.join(self.sonar_config.results_dir, 'train_summaries'), self.sonar_session.graph)
+        eval_writer = tf.summary.FileWriter(os.path.join(self.sonar_config.results_dir, 'eval_summaries'), self.sonar_session.graph)
+        self.sonar_model.add_writers(train_writer, eval_writer)
         self.sonar_model.initialize(self.sonar_session)
         self.sonar_model.initialize_img_buffer()
         print("took {:.2f} seconds\n".format(time.time() - start))
@@ -234,7 +251,6 @@ class PGP(PG):
             self.sonars=sonars
             self.obs = obs
             self.actions = actions
-            self.roll_distance = roll_distance
         return paths, episode_rewards, episode_roll_distances
 
     def train(self):
@@ -286,10 +302,10 @@ class PGP(PG):
                         self.action_placeholder : actions, 
                         self.advantage_placeholder : advantages,
                         self.lr: self.learning_rate})
-            downstream_grads = downstream_grads[0]
             #Concatenate sonar an dsonar 
-            sonar_dsonar_batch = np.concatenate([observations,downstream_grads],axis=1)
-            self.sonar_model.train_on_batch(frames, sonar_dsonar_batch)
+            dsonar_batch = downstream_grads[0][:,:19]
+            print('dsonar_batch: ', dsonar_batch)
+            self.sonar_model.train_on_batch(self.sonar_session,frames, dsonar_batch)
       
           # tf stuff
           if (t % self.config.summary_freq == 0):
