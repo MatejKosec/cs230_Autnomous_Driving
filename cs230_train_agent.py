@@ -32,9 +32,9 @@ class config():
 
     # model and training config
     num_batches = 50 # number of batches trained on 
-    batch_size = 100 # number of steps used to compute each policy update
-    max_ep_len = 100 # maximum episode length
-    learning_rate = 1e-4
+    batch_size = 128 # number of steps used to compute each policy update
+    max_ep_len = 128 # maximum episode length
+    learning_rate = 5e-3
     gamma         = 0.90
     # the discount factor
     use_baseline = True
@@ -43,7 +43,7 @@ class config():
     n_layers = 4
     layer_size = 18
     keep_prob = 0.9
-    activation=tf.nn.relu
+    activation=tf.nn.leaky_relu
 
     # since we start new episodes for each batch
     assert max_ep_len <= batch_size
@@ -52,7 +52,7 @@ class config():
 class Config230(object):    
     batch_size = 64
     n_epochs = 2
-    lr = 0.02
+    lr = 0.001
     n_test_samples = 10
     results_dir='../experiments/image_to_sonar_gradient_weighted/'
 

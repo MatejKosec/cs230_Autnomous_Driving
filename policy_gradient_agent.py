@@ -268,7 +268,7 @@ class PG(object):
     self.max_roll_distance = np.max(rollout_distances)
     self.avg_roll_distance = np.mean(rollout_distances)
     #Update the batch lengths as well
-    self.config.batch_size = max(self.config.batch_size,min(int(self.max_roll_distance*5),200000))
+    self.config.batch_size = max(self.config.batch_size,min(int(self.max_roll_distance**2/80.0),2000))
     self.config.max_ep_len = self.config.batch_size
     
   
