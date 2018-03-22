@@ -61,7 +61,10 @@ def PopulateReplayBuffer(replay_size,episode_count=2,max_steps=2000, history_len
                 frame = ob.img.reshape(64,64,3)[::-1,:,:]
                 frame = color.rgb2gray(frame)
                 frame = frame.reshape((64,64,1))
-                sonar_dsonar = np.stack([ob.track,daction[0:19]])
+                daction = np.reshape(daction,[22])[0:19]
+                #print(ob.track.shape, daction.shape)
+                sonar_dsonar = np.concatenate([ob.track,daction])
+                #print(sonar_dsonar.shape)
                 idx = buffer.store_frame(frame)
                 buffer.store_effect(idx, sonar_dsonar, reward, done)
                 if done or buffer.num_in_buffer >= max_steps:

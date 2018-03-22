@@ -75,7 +75,7 @@ class Model(object):
         
 
     def add_loss_op(self, pred):
-        weights = self.weights_placeholder/tf.sum(self.weights_placeholder, axis=1)*39.0/19.0
+        weights = self.weights_placeholder/tf.reduce_sum(self.weights_placeholder, axis=1)*39.0/19.0
         #weights=(2-tf.cos(tf.linspace(-np.pi,np.pi,19)))
         loss = tf.reduce_mean(weights*(pred-self.sonar_placeholder)**2)
         

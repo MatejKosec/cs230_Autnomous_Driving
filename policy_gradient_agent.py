@@ -294,7 +294,9 @@ class PG(object):
     self.file_writer.add_summary(summary, t)
   def act(self, ob, reward, done, vision):
       state = np.concatenate([ob.track,np.array([ob.speedX,ob.speedY, ob.speedZ])],axis=0)
-      action,daction  = self.sess.run([self.sampled_action,self.inp_grad_means], feed_dict={self.observation_placeholder : np.reshape(state,[1,self.observation_dim])})[0]
+      [action,daction]  = self.sess.run([self.sampled_action,self.inp_grad_means], feed_dict={self.observation_placeholder : np.reshape(state,[1,self.observation_dim])})
+      action = action[0]
+      daction = daction[0]
       return action, daction
   
   
