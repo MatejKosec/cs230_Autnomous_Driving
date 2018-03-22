@@ -100,9 +100,14 @@ class Img2Snr(ImageToSonar):
 
     def train_on_batch(self, sess, observations_batch, sonar_batch):
         """Perform one step of gradient descent on the provided batch of data. """
-        feed = self.create_feed_dict(observations_batch, sonar_batch)
-        _, loss, summary = sess.run([self.train_op, self.loss, self.summary_op], feed_dict=feed)
-        self.train_writer.add_summary(summary)
+        n_minibatches = sonar_batch.shape[0] // self.config.batch_size + 1
+        for i in range(n_minibatches):
+            print('Processing batch %i of %i'%(i,n_minibatches))
+            start =  self.config.batch_size*i
+            end   =  min(self.config.batch_size*(i+1),sonar_batch.shape[0])
+            feed = self.create_feed_dict(observations_batch[start:end,:,:,:], sonar_batch[start:end,:])
+            _, loss, summary = sess.run([self.train_op, self.loss, self.summary_op], feed_dict=feed)
+            self.train_writer.add_summary(summary)
         return loss
         
     def predict(self,session,img):
