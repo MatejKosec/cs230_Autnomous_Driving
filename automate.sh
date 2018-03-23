@@ -1,0 +1,3 @@
+python populate_replay_buffer_image_to_sonar.py 
+python train_image_to_sonar.py
+python cs230_evaluate_agent.py
