@@ -32,9 +32,9 @@ class config():
 
     # model and training config
     num_batches = 50 # number of batches trained on 
-    batch_size = 128 # number of steps used to compute each policy update
-    max_ep_len = 128 # maximum episode length
-    learning_rate = 5e-3
+    batch_size = 250 # number of steps used to compute each policy update
+    max_ep_len = 250 # maximum episode length
+    learning_rate = 1e-2
     gamma         = 0.90
     # the discount factor
     use_baseline = True
@@ -52,7 +52,7 @@ class config():
 class Config230(object):    
     batch_size = 64
     n_epochs = 2
-    lr = 0.001
+    lr = 0.1
     n_test_samples = 10
     results_dir='../experiments/image_to_sonar_gradient_weighted/'
 
@@ -123,7 +123,7 @@ class Img2Snr(ImageToSonar):
     
     def add_coupled_loss(self, pred):
         weights = self.weights_placeholder #these are gradients from downstream
-        coupled_loss = tf.reduce_mean(weights*pred)
+        coupled_loss = tf.reduce_mean(tf.reduce_sum(pred*weights,axis=1))
         tf.summary.scalar("coupled_loss", coupled_loss)
         self.summary_op = tf.summary.merge_all()
         return coupled_loss
@@ -282,7 +282,9 @@ class PGP(PG):
             self.learning_rate = pow(self.learning_rate,0.9)
       
         for t in range(self.config.num_batches):
-      
+          print()
+          print('Running batch %i of %i'%(t,self.config.num_batches))
+          print()
           # collect a minibatch of samples
           paths, total_rewards, rollout_distances = self.sample_path() 
           scores_eval = scores_eval + total_rewards
