@@ -52,7 +52,7 @@ class config():
 class Config230(object):    
     batch_size = 64
     n_epochs = 2
-    lr = 0.1
+    lr = 0.05
     n_test_samples = 10
     results_dir='../experiments/image_to_sonar_gradient_weighted/'
 
