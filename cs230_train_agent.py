@@ -32,9 +32,9 @@ class config():
 
     # model and training config
     num_batches = 50 # number of batches trained on 
-    batch_size = 250 # number of steps used to compute each policy update
-    max_ep_len = 250 # maximum episode length
-    learning_rate = 1e-2
+    batch_size = 200 # number of steps used to compute each policy update
+    max_ep_len = 200 # maximum episode length
+    learning_rate = 5e-3
     gamma         = 0.90
     # the discount factor
     use_baseline = True
@@ -242,8 +242,8 @@ class PGP(PG):
                   episode_rewards.append(episode_reward)
                   episode_roll_distances.append(env.distance_travelled)
                   break
-                if (not num_episodes) and t == self.config.batch_size:
-                  break
+                #if (not num_episodes) and t == self.config.batch_size:
+                #  break
           
               path = {"observation"    : np.array(states), 
                               "reward" : np.array(rewards), 

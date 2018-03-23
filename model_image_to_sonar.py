@@ -53,19 +53,19 @@ class Model(object):
                 
         #Deconvolve, deconvolve
         x5 = x4
-        x6= tf.contrib.layers.conv2d_transpose(x5, 12 , [4,4], stride=1, padding='SAME') #deconvolve
+        x6= tf.contrib.layers.conv2d_transpose(x5, 12 , [4,4], stride=1, padding='SAME',activation_fn=tf.nn.leaky_relu) #deconvolve
         print('x6 shape', x6.shape)
-        x6= tf.contrib.layers.conv2d_transpose(x6, 12 , [4,4], stride=1, padding='SAME') #deconvolve
+        x6= tf.contrib.layers.conv2d_transpose(x6, 12 , [4,4], stride=1, padding='SAME',activation_fn=tf.nn.leaky_relu) #deconvolve
         print('x6 shape', x6.shape)
         
         #Upscale, deconvolve, deconvolve
         x7 = tf.contrib.layers.max_pool2d(x6, \
                                           kernel_size=[2,2], stride=(2,2), padding='SAME')
         print('x7 shape', x7.shape)
-        x8= tf.contrib.layers.conv2d_transpose(x7, 12 ,  [4,4], stride=(1,1), padding='SAME',activation_fn=tf.nn.relu)
+        x8= tf.contrib.layers.conv2d_transpose(x7, 12 ,  [4,4], stride=(1,1), padding='SAME',activation_fn=tf.nn.leaky_relu)
         print('x8 shape', x8.shape)
         x9 = tf.contrib.layers.conv2d(x8, 19, [16,16], stride=(1), padding='valid',activation_fn=tf.nn.leaky_relu)
-        pred = tf.contrib.layers.conv2d(x9, 19, [1,1], stride=(1), padding='valid',activation_fn=tf.nn.sigmoid)
+        pred = tf.contrib.layers.conv2d(x9, 19, [1,1], stride=(1), padding='valid',activation_fn=tf.nn.leaky_relu)
         print('pred shape', pred.shape)
         pred = tf.reshape(pred,[-1,19])
         print('pred shape', pred.shape)
